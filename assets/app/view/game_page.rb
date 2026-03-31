@@ -12,6 +12,8 @@ require_tree './game'
 module View
   class GamePage < Snabberb::Component
     include GameManager
+    include Game::Actionable
+    include Game::AiBridge
     include Lib::Settings
 
     needs :selected_company, default: nil, store: true
@@ -189,6 +191,7 @@ module View
             unless %w[input textarea].include?(Native(`document.activeElement`).localName)
               `document.getElementById('game').focus()`
             end
+            maybe_trigger_ai_move
           },
         },
         on: {

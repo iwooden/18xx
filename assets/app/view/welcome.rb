@@ -96,16 +96,19 @@ module View
     end
 
     def launch_hotseat(seed)
-      settings = { optional_rules: [] }
+      human_idx = rand(3)
+      names = %w[AZ\ 1 AZ\ 2 AZ\ 3]
+      names[human_idx] = 'Human'
+
+      settings = {
+        optional_rules: [],
+        human_player_index: human_idx,
+      }
       settings[:seed] = seed if seed
 
       create_hotseat(
         id: Time.now.to_i,
-        players: [
-          { name: 'Player 1', id: 0 },
-          { name: 'Player 2', id: 1 },
-          { name: 'Player 3', id: 2 },
-        ],
+        players: names.each_with_index.map { |name, i| { name: name, id: i } },
         title: RSS_TITLE,
         description: seed ? "Seed #{seed}" : 'Random seed',
         min_players: 3,
