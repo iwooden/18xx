@@ -70,16 +70,22 @@ module View
       end
 
       def handle_ai_response(data)
-        @ai_pending = false
-
         actions = data['actions']
-        return unless actions && !actions.empty?
+        if actions.nil? || actions.empty?
+          @ai_pending = false
+          return
+        end
 
         apply_ai_actions(actions.to_a, 0)
       end
 
       def apply_ai_actions(actions, idx)
-        return if idx >= actions.length
+        if idx >= actions.length
+          # All actions applied — release the lock so postpatch can
+          # trigger the next AI move on the next re-render cycle.
+          @ai_pending = false
+          return
+        end
 
         intent = actions[idx]
         action_h = intent_to_action_h(intent)
@@ -89,6 +95,7 @@ module View
             action = Engine::Action::Base.action_from_h(action_h, @game)
             process_action(action)
           rescue StandardError => e
+            @ai_pending = false
             LOGGER.error("AI bridge: failed to apply action: #{e.message}")
             store(:flash_opts, "AI action failed: #{e.message}")
             return
@@ -103,12 +110,9 @@ module View
             }, #{AI_MOVE_DELAY_MS})
           }
         else
-          # All actions applied — check if AI still needs to act
-          %x{
-            setTimeout(function() {
-              #{maybe_trigger_ai_move}
-            }, #{AI_MOVE_DELAY_MS})
-          }
+          # Release lock — postpatch from the last process_action
+          # re-render will call maybe_trigger_ai_move.
+          @ai_pending = false
         end
       end
 
@@ -144,10 +148,20 @@ module View
       end
 
       def build_pass_h(entity)
+        etype = if entity.player?
+                  'player'
+                elsif entity.corporation?
+                  'corporation'
+                elsif entity.company?
+                  'company'
+                else
+                  'player'
+                end
+
         {
           'type' => 'pass',
           'entity' => entity.id,
-          'entity_type' => entity.class.name.split('::').last,
+          'entity_type' => etype,
         }
       end
 

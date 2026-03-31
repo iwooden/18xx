@@ -30,7 +30,7 @@ class Api < Roda
     csp.font_src :self, 'fonts.gstatic.com'
     csp.form_action :self
     csp.script_src :self, :unsafe_inline, 'cdn.jsdelivr.net'
-    csp.connect_src :self
+    csp.connect_src :self, 'http://localhost:5050'
     csp.base_uri :none
     csp.frame_ancestors :none
   end
