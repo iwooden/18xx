@@ -17,12 +17,19 @@ module View
       end
 
       def human_player_index(game_data)
-        game_data&.dig(:settings, :human_player_index) || 0
+        game_data&.dig(:settings, :human_player_index)
+      end
+
+      def spectator_mode?(game_data)
+        human_player_index(game_data) == -1
       end
 
       def ai_acting?(game, game_data)
         return false unless game && !game.finished
         return false unless ai_players?(game_data)
+
+        # Spectator mode: all players are AI
+        return true if spectator_mode?(game_data)
 
         human_idx = human_player_index(game_data)
         acting = game.active_players_id

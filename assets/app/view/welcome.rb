@@ -29,6 +29,7 @@ module View
       h('div#welcome', { style: container_style }, [
         h(:h1, { style: { marginBottom: '1.5rem' } }, 'Rolling Stock Stars'),
         render_seed_input,
+        render_human_toggle,
         render_buttons,
       ])
     end
@@ -61,6 +62,27 @@ module View
       input = h(:input, input_props)
       @inputs[:seed] = input
       input
+    end
+
+    def render_human_toggle
+      checkbox_style = {
+        display: 'flex',
+        alignItems: 'center',
+        marginBottom: '1rem',
+        width: '100%',
+        cursor: 'pointer',
+      }
+
+      cb = h(:input, {
+        attrs: { type: 'checkbox', id: 'human_player', checked: true },
+        style: { marginRight: '0.5rem', cursor: 'pointer' },
+      })
+      @inputs[:human_player] = cb
+
+      h(:label, { style: checkbox_style, attrs: { for: 'human_player' } }, [
+        cb,
+        'Human player',
+      ])
     end
 
     def render_buttons
@@ -96,14 +118,20 @@ module View
     end
 
     def launch_hotseat(seed)
-      human_idx = rand(3)
-      names = %w[AZ\ 1 AZ\ 2 AZ\ 3]
-      names[human_idx] = 'Human'
+      human_cb = Native(@inputs[:human_player])&.elm
+      include_human = human_cb ? human_cb.JS['checked'] : true
 
-      settings = {
-        optional_rules: [],
-        human_player_index: human_idx,
-      }
+      names = %w[AZ\ 1 AZ\ 2 AZ\ 3]
+      settings = { optional_rules: [] }
+
+      if include_human
+        human_idx = rand(3)
+        names[human_idx] = 'Human'
+        settings[:human_player_index] = human_idx
+      else
+        settings[:human_player_index] = -1
+      end
+
       settings[:seed] = seed if seed
 
       create_hotseat(
