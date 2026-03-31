@@ -186,6 +186,7 @@ module View
           insert: lambda {
             scroll_to_game_menu
             `document.getElementById('game').focus()`
+            maybe_trigger_ai_move
           },
           postpatch: lambda {
             unless %w[input textarea].include?(Native(`document.activeElement`).localName)
