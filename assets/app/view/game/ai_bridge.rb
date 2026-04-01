@@ -55,8 +55,31 @@ module View
         }
       end
 
+      def build_state_checksum
+        players = @game.players.map do |p|
+          {
+            name: p.name,
+            cash: p.cash,
+            value: p.value,
+            companies: p.companies.map(&:sym).sort,
+          }
+        end
+
+        corps = @game.corporations.select(&:floated?).map do |c|
+          {
+            name: c.id,
+            cash: c.cash,
+            share_price: c.share_price&.price,
+            companies: c.companies.map(&:sym).sort,
+          }
+        end
+
+        { players: players, corps: corps }
+      end
+
       def fetch_ai_move(game_data)
-        payload = { game_data: game_data }.to_n
+        checksum = build_state_checksum
+        payload = { game_data: game_data, state_checksum: checksum }.to_n
 
         %x{
           fetch(#{AI_SERVER_URL + '/api/ai-move'}, {
@@ -69,7 +92,7 @@ module View
             #{handle_ai_response(`Opal.Hash.$new(data)`)}
           })
           .catch(function(err) {
-            console.error('AI server error:', err)
+            console.error('AI server error:', err);
             #{@ai_pending = false}
             #{store(:flash_opts, 'AI server error — is the server running?')}
           })
@@ -107,6 +130,16 @@ module View
             store(:flash_opts, "AI action failed: #{e.message}")
             return
           end
+        else
+          # action_h was nil — no process_action ran, so no re-render
+          # will trigger maybe_trigger_ai_move.  Schedule a deferred
+          # re-trigger to keep the AI move loop alive.
+          LOGGER.warn("AI bridge: skipping nil action for intent: #{intent}")
+          @ai_pending = false
+          %x{
+            setTimeout(function() { #{maybe_trigger_ai_move} }, #{AI_MOVE_DELAY_MS})
+          }
+          return
         end
 
         # Apply next action with delay if more remain
@@ -117,8 +150,6 @@ module View
             }, #{AI_MOVE_DELAY_MS})
           }
         else
-          # Release lock — postpatch from the last process_action
-          # re-render will call maybe_trigger_ai_move.
           @ai_pending = false
         end
       end
@@ -126,6 +157,14 @@ module View
       def intent_to_action_h(intent)
         type = intent['type']
         entity = @game.round.current_entity
+        step = @game.round.active_step
+
+        # When the 18xx engine is in the receivership step (right-of-first-
+        # refusal), the only valid action is "respond".  Our engine auto-
+        # handles receivership buys, so we decline intervention.
+        if step.is_a?(Engine::Game::GRollingStock::Step::ReceiverProposeAndPurchase)
+          return build_receiver_decline_h(entity)
+        end
 
         case type
         when 'pass', 'close_pass', 'acq_pass'
@@ -142,10 +181,10 @@ module View
           build_dividend_h(entity, intent)
         when 'issue'
           build_issue_h(entity, intent)
-        when 'acquire'
-          build_acquire_h(entity, intent)
-        when 'acquire_fi'
-          build_acquire_fi_h(entity, intent)
+        when 'offer'
+          build_offer_h(entity, intent)
+        when 'respond'
+          build_respond_h(intent)
         when 'close'
           build_close_h(entity, intent)
         else
@@ -254,32 +293,44 @@ module View
         }
       end
 
-      def build_acquire_h(_entity, intent)
-        corp = @game.corporation_by_id(intent['corporation'])
-        company = @game.company_by_id(intent['company'])
+      def build_receiver_decline_h(entity)
+        # Decline right-of-first-refusal for a receivership FI purchase.
+        # Find the pending offer where this entity is the responder.
+        offer = @game.round.offers.find { |o| o[:responder] == entity }
+        return build_pass_h(entity) unless offer
 
-        # Acquisition in RSS: corp responds to its own offer to buy
         {
           'type' => 'respond',
-          'entity' => corp.owner.id,
+          'entity' => entity.id,
           'entity_type' => 'player',
-          'corporation' => corp.id,
-          'company' => company.id,
-          'accept' => 'true',
+          'corporation' => offer[:corporation].id,
+          'company' => offer[:company].id,
+          'accept' => 'false',
         }
       end
 
-      def build_acquire_fi_h(_entity, intent)
-        corp = @game.corporation_by_id(intent['corporation'])
-        company = @game.company_by_id(intent['company'])
+      def build_offer_h(entity, intent)
+        {
+          'type' => 'offer',
+          'entity' => entity.id,
+          'entity_type' => 'player',
+          'corporation' => intent['corporation'],
+          'company' => intent['company'],
+          'price' => intent['price'],
+        }
+      end
 
+      def build_respond_h(intent)
+        # After an offer is processed, the 18xx engine sets
+        # current_entity to the company owner (the responder).
+        entity = @game.round.current_entity
         {
           'type' => 'respond',
-          'entity' => corp.owner.id,
+          'entity' => entity.id,
           'entity_type' => 'player',
-          'corporation' => corp.id,
-          'company' => company.id,
-          'accept' => 'true',
+          'corporation' => intent['corporation'],
+          'company' => intent['company'],
+          'accept' => intent['accept'] || 'true',
         }
       end
 
