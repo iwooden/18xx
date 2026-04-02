@@ -77,9 +77,36 @@ module View
         { players: players, corps: corps }
       end
 
+      def detect_preemption_context
+        step = @game.round.active_step
+        return nil unless step.is_a?(Engine::Game::GRollingStock::Step::ProposeAndPurchase)
+
+        entity = @game.round.current_entity
+        return nil unless entity&.player?
+
+        offer = step.offers.find { |o| o[:responder] == entity }
+        return nil unless offer
+        return nil unless offer[:company].owner == @game.foreign_investor
+        return nil unless offer[:responder_list]&.any?
+
+        preempting_corp = offer[:responder_list].first
+        return nil unless preempting_corp
+
+        {
+          preempting_corp: preempting_corp.id,
+          corporation: offer[:corporation].id,
+          company: offer[:company].id,
+        }
+      end
+
       def fetch_ai_move(game_data)
         checksum = build_state_checksum
-        payload = { game_data: game_data, state_checksum: checksum }.to_n
+        payload = { game_data: game_data, state_checksum: checksum }
+
+        preemption = detect_preemption_context
+        payload[:preemption] = preemption if preemption
+
+        payload = payload.to_n
 
         %x{
           fetch(#{AI_SERVER_URL + '/api/ai-move'}, {
@@ -164,6 +191,24 @@ module View
         # handles receivership buys, so we decline intervention.
         if step.is_a?(Engine::Game::GRollingStock::Step::ReceiverProposeAndPurchase)
           return build_receiver_decline_h(entity)
+        end
+
+        # Handle pending responds for AI players in ProposeAndPurchase.
+        # FI right-of-first-refusal: use server's MCTS-based respond.
+        # Non-FI cross-president offers: auto-accept without consulting server.
+        if step.is_a?(Engine::Game::GRollingStock::Step::ProposeAndPurchase)
+          offer = step.offers.find { |o| o[:responder] == entity }
+          if offer
+            return build_respond_h(intent) if type == 'respond'
+
+            # Fallback: FI offers decline, non-FI offers accept.
+            accept = offer[:company].owner != @game.foreign_investor
+            return build_respond_h({
+              'corporation' => offer[:corporation].id,
+              'company' => offer[:company].id,
+              'accept' => accept ? 'true' : 'false',
+            })
+          end
         end
 
         case type
